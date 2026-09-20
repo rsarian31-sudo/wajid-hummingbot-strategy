@@ -36,7 +36,7 @@ def _closed(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _atr(df: pd.DataFrame, period: int = 14) -> float:
-    closed = _closed(df)
+    closed = _closed(df.tail(period + 25))
     if len(closed) < 3:
         return 0.0
     prev_close = closed["close"].shift(1)
@@ -76,7 +76,9 @@ def _swing_points(df: pd.DataFrame, left: int = 2, right: int = 2):
 
 
 def _structure_bias(df: pd.DataFrame) -> Optional[str]:
-    closed = _closed(df)
+    # Only recent structure is needed; bounding this window keeps the
+    # historical backtest linear rather than repeatedly scanning all history.
+    closed = _closed(df.tail(121))
     if len(closed) < 10:
         return None
     highs, lows = _swing_points(closed)
@@ -94,7 +96,7 @@ def _structure_bias(df: pd.DataFrame) -> Optional[str]:
 
 
 def _latest_swing_before(df: pd.DataFrame, side: str) -> Optional[float]:
-    highs, lows = _swing_points(df)
+    highs, lows = _swing_points(df.tail(81))
     points = highs if side == "HIGH" else lows
     return points[-1][1] if points else None
 
