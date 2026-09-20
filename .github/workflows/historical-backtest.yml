@@ -1,0 +1,36 @@
+name: historical-backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "UTC start date, YYYY-MM-DD"
+        required: true
+        default: "2026-01-01"
+      end:
+        description: "UTC end date, YYYY-MM-DD"
+        required: true
+        default: "2026-02-01"
+      symbol:
+        description: "Binance USD-M symbol"
+        required: true
+        default: "BTCUSDT"
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: mkdir -p data
+      - run: python download_binance_5m.py --symbol "${{ inputs.symbol }}" --start "${{ inputs.start }}" --end "${{ inputs.end }}" --out data/market.csv
+      - run: python backtest.py data/market.csv --out backtest_trades.csv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wajid-backtest-results
+          path: |
+            backtest_trades.csv
+            data/market.csv
