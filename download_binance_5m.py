@@ -1,53 +1,86 @@
 """
-Download Binance USD-M BTCUSDT 5m klines into the CSV format used by backtest.py.
-No API key is required for public market data.
+Download Binance USD-M BTCUSDT 5m historical klines.
+
+The downloader uses Binance's public data archive rather than the Futures
+REST API. This avoids exchange/API geo restrictions on GitHub-hosted runners.
 
 Example:
 python download_binance_5m.py --start 2026-01-01 --end 2026-02-01 --out data/btcusdt_5m.csv
 """
 from __future__ import annotations
+
 import argparse
-import time
+import io
+import zipfile
 from datetime import datetime, timezone
-import requests
+from pathlib import Path
+
 import pandas as pd
+import requests
 
-URL="https://fapi.binance.com/fapi/v1/klines"
+BASE = "https://data.binance.vision/data/futures/um/monthly/klines"
 
-def ms(s):
-    return int(datetime.fromisoformat(s.replace("Z","+00:00")).replace(tzinfo=timezone.utc).timestamp()*1000)
 
-def download(symbol,start,end,out):
-    start_ms=ms(start+"T00:00:00Z") if len(start)==10 else ms(start)
-    end_ms=ms(end+"T00:00:00Z") if len(end)==10 else ms(end)
-    rows=[]
-    cursor=start_ms
-    while cursor < end_ms:
-        params={"symbol":symbol,"interval":"5m","startTime":cursor,"endTime":end_ms,"limit":1500}
-        r=requests.get(URL,params=params,timeout=30)
-        r.raise_for_status()
-        batch=r.json()
-        if not batch: break
-        rows.extend(batch)
-        cursor=int(batch[-1][0])+5*60*1000
-        print(f"downloaded {len(rows)} candles")
-        if len(batch)<1500: break
-        time.sleep(0.15)
-    cols=["timestamp","open","high","low","close","volume","close_time","quote_volume","trades","taker_base","taker_quote","ignore"]
-    df=pd.DataFrame(rows,columns=cols)
-    if df.empty: raise RuntimeError("No candles returned")
-    df=df.drop_duplicates("timestamp")
-    df["timestamp"]=pd.to_datetime(df["timestamp"],unit="ms",utc=True)
-    for c in ["open","high","low","close","volume"]:
-        df[c]=pd.to_numeric(df[c])
-    df[["timestamp","open","high","low","close","volume"]].to_csv(out,index=False)
+def parse_date(value: str) -> pd.Timestamp:
+    ts = pd.Timestamp(value, tz="UTC")
+    return ts.normalize()
+
+
+def month_starts(start: pd.Timestamp, end: pd.Timestamp):
+    cur = start.replace(day=1)
+    while cur < end:
+        yield cur
+        cur = cur + pd.offsets.MonthBegin(1)
+
+
+def download(symbol: str, start: str, end: str, out: str):
+    start_ts = parse_date(start)
+    end_ts = parse_date(end)
+    if end_ts <= start_ts:
+        raise ValueError("--end must be after --start")
+
+    frames = []
+    for month in month_starts(start_ts, end_ts):
+        ym = month.strftime("%Y-%m")
+        url = f"{BASE}/{symbol}/5m/{symbol}-5m-{ym}.zip"
+        print(f"downloading {url}")
+        response = requests.get(url, timeout=60)
+        response.raise_for_status()
+
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            csv_names = [n for n in archive.namelist() if n.endswith(".csv")]
+            if not csv_names:
+                raise RuntimeError(f"No CSV found in {url}")
+            with archive.open(csv_names[0]) as fh:
+                raw = pd.read_csv(fh, header=None)
+
+        # Binance kline archive schema:
+        # open time, open, high, low, close, volume, close time,
+        # quote volume, trades, taker buy base, taker buy quote, ignore
+        raw = raw.iloc[:, :6]
+        raw.columns = ["timestamp", "open", "high", "low", "close", "volume"]
+        raw["timestamp"] = pd.to_datetime(raw["timestamp"], unit="ms", utc=True)
+        for col in ["open", "high", "low", "close", "volume"]:
+            raw[col] = pd.to_numeric(raw[col], errors="coerce")
+        frames.append(raw.dropna())
+
+    if not frames:
+        raise RuntimeError("No monthly data returned")
+
+    df = pd.concat(frames, ignore_index=True)
+    df = df.drop_duplicates("timestamp").sort_values("timestamp")
+    df = df[(df["timestamp"] >= start_ts) & (df["timestamp"] < end_ts)]
+
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(out, index=False)
     print(f"saved {len(df)} candles -> {out}")
 
-if __name__=="__main__":
-    p=argparse.ArgumentParser()
-    p.add_argument("--symbol",default="BTCUSDT")
-    p.add_argument("--start",required=True)
-    p.add_argument("--end",required=True)
-    p.add_argument("--out",default="data/btcusdt_5m.csv")
-    a=p.parse_args()
-    download(a.symbol,a.start,a.end,a.out)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--symbol", default="BTCUSDT")
+    parser.add_argument("--start", required=True)
+    parser.add_argument("--end", required=True)
+    parser.add_argument("--out", default="data/btcusdt_5m.csv")
+    args = parser.parse_args()
+    download(args.symbol, args.start, args.end, args.out)
