@@ -6,7 +6,7 @@ on:
       start:
         description: "UTC start date, YYYY-MM-DD"
         required: true
-        default: "2026-01-01"
+        default: "2026-04-01"
       end:
         description: "UTC end date, YYYY-MM-DD"
         required: true
@@ -36,7 +36,7 @@ jobs:
       - run: mkdir -p data
       - name: Download historical data
         env:
-          START: ${{ inputs.start || '2026-01-01' }}
+          START: ${{ inputs.start || '2026-04-01' }}
           END: ${{ inputs.end || '2026-07-01' }}
           SYMBOL: ${{ inputs.symbol || 'BTCUSDT' }}
         run: python download_binance_5m.py --symbol "$SYMBOL" --start "$START" --end "$END" --out data/market.csv
