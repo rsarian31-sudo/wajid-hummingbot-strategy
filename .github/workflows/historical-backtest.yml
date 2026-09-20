@@ -15,6 +15,13 @@ on:
         description: "Binance USD-M symbol"
         required: true
         default: "BTCUSDT"
+  push:
+    paths:
+      - "download_binance_5m.py"
+      - "backtest.py"
+      - "wajid_liquidity_signal.py"
+      - "requirements.txt"
+      - ".github/workflows/historical-backtest.yml"
 
 jobs:
   backtest:
@@ -26,7 +33,12 @@ jobs:
           python-version: "3.12"
       - run: pip install -r requirements.txt
       - run: mkdir -p data
-      - run: python download_binance_5m.py --symbol "${{ inputs.symbol }}" --start "${{ inputs.start }}" --end "${{ inputs.end }}" --out data/market.csv
+      - name: Download historical data
+        env:
+          START: ${{ inputs.start || '2026-01-01' }}
+          END: ${{ inputs.end || '2026-02-01' }}
+          SYMBOL: ${{ inputs.symbol || 'BTCUSDT' }}
+        run: python download_binance_5m.py --symbol "$SYMBOL" --start "$START" --end "$END" --out data/market.csv
       - run: python backtest.py data/market.csv --out backtest_trades.csv
       - uses: actions/upload-artifact@v4
         with:
