@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
 
@@ -56,23 +57,34 @@ def _atr(df: pd.DataFrame, period: int = 14) -> float:
 
 
 def _swing_points(df: pd.DataFrame, left: int = 2, right: int = 2):
-    """Return confirmed swing highs/lows without using future candles."""
-    if len(df) < left + right + 1:
+    """Return confirmed swing highs/lows using vectorized numpy windows."""
+    width = left + right + 1
+    if len(df) < width:
         return [], []
-    highs = []
-    lows = []
-    for i in range(left, len(df) - right):
-        h = float(df["high"].iloc[i])
-        l = float(df["low"].iloc[i])
-        left_highs = df["high"].iloc[i-left:i]
-        right_highs = df["high"].iloc[i+1:i+right+1]
-        left_lows = df["low"].iloc[i-left:i]
-        right_lows = df["low"].iloc[i+1:i+right+1]
-        if h > float(left_highs.max()) and h >= float(right_highs.max()):
-            highs.append((i, h))
-        if l < float(left_lows.min()) and l <= float(right_lows.min()):
-            lows.append((i, l))
-    return highs, lows
+
+    highs = df["high"].to_numpy(dtype=float)
+    lows = df["low"].to_numpy(dtype=float)
+    high_windows = np.lib.stride_tricks.sliding_window_view(highs, width)
+    low_windows = np.lib.stride_tricks.sliding_window_view(lows, width)
+
+    center_high = high_windows[:, left]
+    center_low = low_windows[:, left]
+    high_mask = (
+        (center_high > np.max(high_windows[:, :left], axis=1))
+        & (center_high >= np.max(high_windows[:, left + 1 :], axis=1))
+    )
+    low_mask = (
+        (center_low < np.min(low_windows[:, :left], axis=1))
+        & (center_low <= np.min(low_windows[:, left + 1 :], axis=1))
+    )
+
+    offset = left
+    high_indices = np.flatnonzero(high_mask) + offset
+    low_indices = np.flatnonzero(low_mask) + offset
+    return (
+        [(int(i), float(highs[i])) for i in high_indices],
+        [(int(i), float(lows[i])) for i in low_indices],
+    )
 
 
 def _structure_bias(df: pd.DataFrame) -> Optional[str]:
