@@ -1,18 +1,14 @@
 """
 Download Binance USD-M BTCUSDT 5m historical klines.
 
-The downloader uses Binance's public data archive rather than the Futures
-REST API. This avoids exchange/API geo restrictions on GitHub-hosted runners.
-
-Example:
-python download_binance_5m.py --start 2026-01-01 --end 2026-02-01 --out data/btcusdt_5m.csv
+Uses Binance's public data archive rather than the Futures REST API.
 """
+
 from __future__ import annotations
 
 import argparse
 import io
 import zipfile
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -22,8 +18,7 @@ BASE = "https://data.binance.vision/data/futures/um/monthly/klines"
 
 
 def parse_date(value: str) -> pd.Timestamp:
-    ts = pd.Timestamp(value, tz="UTC")
-    return ts.normalize()
+    return pd.Timestamp(value, tz="UTC").normalize()
 
 
 def month_starts(start: pd.Timestamp, end: pd.Timestamp):
@@ -31,6 +26,32 @@ def month_starts(start: pd.Timestamp, end: pd.Timestamp):
     while cur < end:
         yield cur
         cur = cur + pd.offsets.MonthBegin(1)
+
+
+def read_kline_csv(fh) -> pd.DataFrame:
+    raw = pd.read_csv(fh, header=None)
+
+    # Binance archive files can contain a header row. Support both variants.
+    first = str(raw.iloc[0, 0]).strip().lower() if len(raw) else ""
+    if first in {"open_time", "open time", "timestamp"}:
+        raw = raw.iloc[1:].reset_index(drop=True)
+
+    if raw.shape[1] < 6:
+        raise RuntimeError(f"Unexpected kline schema: {raw.shape[1]} columns")
+
+    raw = raw.iloc[:, :6].copy()
+    raw.columns = ["timestamp", "open", "high", "low", "close", "volume"]
+    raw["timestamp"] = pd.to_numeric(raw["timestamp"], errors="coerce")
+    raw["timestamp"] = pd.to_datetime(
+        raw["timestamp"], unit="ms", utc=True, errors="coerce"
+    )
+
+    for col in ["open", "high", "low", "close", "volume"]:
+        raw[col] = pd.to_numeric(raw[col], errors="coerce")
+
+    return raw.dropna(
+        subset=["timestamp", "open", "high", "low", "close", "volume"]
+    )
 
 
 def download(symbol: str, start: str, end: str, out: str):
@@ -44,6 +65,7 @@ def download(symbol: str, start: str, end: str, out: str):
         ym = month.strftime("%Y-%m")
         url = f"{BASE}/{symbol}/5m/{symbol}-5m-{ym}.zip"
         print(f"downloading {url}")
+
         response = requests.get(url, timeout=60)
         response.raise_for_status()
 
@@ -52,17 +74,7 @@ def download(symbol: str, start: str, end: str, out: str):
             if not csv_names:
                 raise RuntimeError(f"No CSV found in {url}")
             with archive.open(csv_names[0]) as fh:
-                raw = pd.read_csv(fh, header=None)
-
-        # Binance kline archive schema:
-        # open time, open, high, low, close, volume, close time,
-        # quote volume, trades, taker buy base, taker buy quote, ignore
-        raw = raw.iloc[:, :6]
-        raw.columns = ["timestamp", "open", "high", "low", "close", "volume"]
-        raw["timestamp"] = pd.to_datetime(raw["timestamp"], unit="ms", utc=True)
-        for col in ["open", "high", "low", "close", "volume"]:
-            raw[col] = pd.to_numeric(raw[col], errors="coerce")
-        frames.append(raw.dropna())
+                frames.append(read_kline_csv(fh))
 
     if not frames:
         raise RuntimeError("No monthly data returned")
@@ -70,6 +82,9 @@ def download(symbol: str, start: str, end: str, out: str):
     df = pd.concat(frames, ignore_index=True)
     df = df.drop_duplicates("timestamp").sort_values("timestamp")
     df = df[(df["timestamp"] >= start_ts) & (df["timestamp"] < end_ts)]
+
+    if df.empty:
+        raise RuntimeError("Downloaded archive contained no candles in requested range")
 
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(out, index=False)
