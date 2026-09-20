@@ -10,7 +10,7 @@ on:
       end:
         description: "UTC end date, YYYY-MM-DD"
         required: true
-        default: "2026-02-01"
+        default: "2026-07-01"
       symbol:
         description: "Binance USD-M symbol"
         required: true
@@ -20,6 +20,7 @@ on:
       - "download_binance_5m.py"
       - "backtest.py"
       - "wajid_liquidity_signal.py"
+      - "wajid_liquidity_signal_v2.py"
       - "requirements.txt"
       - ".github/workflows/historical-backtest.yml"
 
@@ -36,7 +37,7 @@ jobs:
       - name: Download historical data
         env:
           START: ${{ inputs.start || '2026-01-01' }}
-          END: ${{ inputs.end || '2026-02-01' }}
+          END: ${{ inputs.end || '2026-07-01' }}
           SYMBOL: ${{ inputs.symbol || 'BTCUSDT' }}
         run: python download_binance_5m.py --symbol "$SYMBOL" --start "$START" --end "$END" --out data/market.csv
       - run: python backtest.py data/market.csv --out backtest_trades.csv
