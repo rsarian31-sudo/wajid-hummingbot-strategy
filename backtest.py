@@ -57,7 +57,9 @@ def run_backtest(
 
     for i in range(30, len(df_5m)):
         candle = df_5m.iloc[i]
-        closed_5m = df_5m.iloc[: i + 1]
+        # V2 only needs recent 5M structure; avoid copying the entire history
+        # on every candle during long backtests.
+        closed_5m = df_5m.iloc[max(0, i - 120) : i + 1]
 
         still_open = []
         for pos in open_positions:
@@ -118,8 +120,8 @@ def run_backtest(
         if len(open_positions) >= max_open_trades:
             continue
 
-        t15 = df_15m.loc[df_15m.index <= candle.name] if df_15m is not None else None
-        t4h = df_4h.loc[df_4h.index <= candle.name] if df_4h is not None else None
+        t15 = df_15m.loc[df_15m.index <= candle.name].tail(130) if df_15m is not None else None
+        t4h = df_4h.loc[df_4h.index <= candle.name].tail(130) if df_4h is not None else None
         signal = detect_signal(closed_5m, t15, t4h)
         if signal is None:
             continue
